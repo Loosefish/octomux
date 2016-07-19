@@ -1,0 +1,95 @@
+#!/bin/bash
+
+usage="\
+Usage: $(basename $0) [-n name] [command [path]]
+
+  -n name      specify name for session group (default: 'octomux')
+
+  command
+    init       create base session without attaching
+    cleanup    kill detached sessions except for base session
+    new-window create new window and attach to session
+    (default)  attach to base session (creates new session if there is none)
+
+  path
+    working dir for new session or window"
+
+prefix="octomux"
+
+
+octomux_init() {
+	tmux new-session -d -s $prefix-0
+}
+
+
+octomux_kill() {
+	octomux_cleanup
+	tmux kill-session -t $prefix-0
+}
+
+
+octomux_cleanup() {
+	old_sessions=$(tmux ls|grep -v "(attached)$"|grep "^$prefix-[1-9]\+[0-9]*:"|cut -f1 -d:)
+	for old_session_id in $old_sessions; do
+		tmux kill-session -t $old_session_id
+	done
+}
+
+
+octomux_auto() {
+	[[ ! -z $TMUX ]] && return 1
+	# Check if base session exists
+	started=$(tmux ls 2>/dev/null|grep "^$prefix-0"|wc -l)
+	if [[ $started -eq 0 ]]; then
+		octomux_init
+		session=$prefix-0
+	else
+		octomux_cleanup
+		# Check if base session is detached
+		attached=$(tmux ls|grep "^$prefix-0:.*(attached)$")
+		if [[ -z $attached  ]]; then
+			session=$prefix-0
+		else
+			# Create a new linked session
+			new_session=$(tmux ls|grep "^$prefix"|sort|tail -n1|cut -f2 -d-|cut -f1 -d:)
+			new_session=$(( $new_session + 1 ))
+			tmux new-session -d -t $prefix-0 -s $prefix-$new_session
+			session=$prefix-$new_session
+		fi
+		[[ "$1" == "new-window" ]] && tmux new-window -t $session
+	fi
+	tmux attach -t $session
+}
+
+
+OPTIND=1
+while getopts "n:" opt; do
+	case ${opt} in
+		n )
+			prefix="$OPTARG"
+			;;
+	esac
+done
+shift "$(( OPTIND - 1 ))"
+
+[[ "$2" != "" ]] && cd $2
+case "$1" in
+	init)
+		octomux_init
+		;;
+	kill)
+		octomux_kill
+		;;
+	cleanup)
+		octomux_cleanup
+		;;
+	new-window)
+		octomux_auto new-window
+		;;
+	"")
+		octomux_auto
+		;;
+	*)
+		echo -e "$usage"
+		;;
+esac
